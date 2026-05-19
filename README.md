@@ -1,6 +1,6 @@
 # 📚 ArXiv 每日论文推送助手
 
-自动抓取 ArXiv 最新 AI 论文，使用 DeepSeek 进行深度分析，并推送到飞书。
+自动抓取 ArXiv 最新 AI 论文，使用 DeepSeek 进行深度分析，并推送到飞书和邮箱。
 
 ## ✨ 功能特性
 
@@ -13,6 +13,7 @@
   - 【专业知识解释】术语科普
 - 💻 **代码链接**：自动从 PapersWithCode 匹配开源代码
 - 📱 **飞书推送**：生成精美富文本卡片推送至飞书群
+- 📧 **邮箱推送**：通过 SMTP 将日报同步发送到指定邮箱
 
 ## 🚀 快速开始
 
@@ -30,10 +31,25 @@ pip install arxiv requests
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/你的Webhook地址"
 DEEPSEEK_API_KEY = "你的DeepSeek API Key"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"  # 或你的API地址
+
+# 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
+EMAIL_ENABLED = False
+SMTP_HOST = "smtp.example.com"
+SMTP_PORT = 465
+SMTP_USERNAME = "your_email@example.com"
+SMTP_PASSWORD = "your_email_password_or_app_password"
+SMTP_USE_SSL = True
+SMTP_USE_TLS = False
+EMAIL_FROM = SMTP_USERNAME
+EMAIL_TO = ["recipient@example.com"]
+EMAIL_SUBJECT_PREFIX = "ArXiv 每日论文"
 ```
 
 - 飞书 Webhook：在飞书群设置 → 添加机器人 → 自定义机器人 → 获取 Webhook 地址
 - DeepSeek API Key：在 DeepSeek 开放平台 获取
+- 邮箱 SMTP：在邮箱服务商开启 SMTP/客户端授权，填写服务器地址、端口、账号和授权码
+- 如使用 465 端口，通常保持 `SMTP_USE_SSL = True`；如使用 587 端口，通常设置 `SMTP_USE_SSL = False` 且 `SMTP_USE_TLS = True`
+- 支持多个收件人，例如：`EMAIL_TO = ["a@example.com", "b@example.com"]`
 
 ### 3.设置每日自动运行（Windows 任务计划程序）
 
@@ -51,6 +67,6 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"  # 或你的AP
 
 ### 4.注意事项
 
-- 确保网络可访问 ArXiv、DeepSeek API 和飞书服务器
+- 确保网络可访问 ArXiv、DeepSeek API、飞书服务器和 SMTP 服务器
 - 建议先手动运行测试，确认配置无误后再设置定时任务
 - 如需修改论文查询关键词，编辑 daily_paper.py 中的 query 参数

@@ -10,7 +10,7 @@ python "daily_paper.py"
 
 if %ERRORLEVEL% equ 0 (
     echo.
-    echo [成功] 论文抓取分析已完成，并已推送到飞书。
+    echo [成功] 论文抓取分析已完成，并已执行配置的推送。
 ) else (
     echo.
     echo [错误] 脚本运行出错，请检查 API Key 或网络连接。
