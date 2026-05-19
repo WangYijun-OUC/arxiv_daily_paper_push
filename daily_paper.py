@@ -26,21 +26,48 @@ def _load_dotenv():
 _load_dotenv()
 
 # --- 配置区 ---
-# 敏感信息：在 .env 或系统环境变量中设置 DEEPSEEK_API_KEY、SMTP_PASSWORD、SMTP_USERNAME
+# 敏感信息：在 .env 中设置 DEEPSEEK_API_KEY / USTC_API_KEY、SMTP_PASSWORD、SMTP_USERNAME
+
+# LLM 调用渠道: "official" 官方 DeepSeek | "ustc" 中科大校内平台
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "official")
+
+LLM_PROVIDERS = {
+    "official": {
+        "name": "DeepSeek 官方",
+        "base_url": "https://api.deepseek.com",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "default_api_key": "your_deepseek_api_key",
+        "temperature": None,
+    },
+    "ustc": {
+        "name": "中科大 LLM 平台",
+        "base_url": "https://api.llm.ustc.edu.cn/v1",
+        "api_key_env": "USTC_API_KEY",
+        "api_key_fallback_env": "DEEPSEEK_API_KEY",
+        "default_api_key": "your_ustc_api_key",
+        "temperature": float(os.environ.get("USTC_TEMPERATURE", "0.3")),
+    },
+}
+
 FEISHU_ENABLED = False
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook"
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "your_deepseek_api_key")
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
-# DeepSeek 模型选择（修改 DEEPSEEK_MODEL 即可切换）
-DEEPSEEK_MODELS = {
-    "deepseek-chat": "通用对话，速度快，适合日常论文摘要",
-    "deepseek-reasoner": "推理模型，先思考再回答，质量更高但更慢、更耗 token",
-    "deepseek-v4-pro": "V4 旗舰模型，效果最好",
-    "deepseek-v4-flash": "V4 快速版，速度与效果平衡",
+# 各渠道支持的模型（修改 DEEPSEEK_MODEL 即可切换）
+PROVIDER_MODELS = {
+    "official": {
+        "deepseek-chat": "通用对话，速度快，适合日常论文摘要",
+        "deepseek-reasoner": "推理模型，先思考再回答，质量更高但更慢、更耗 token",
+        "deepseek-v4-pro": "V4 旗舰模型，效果最好",
+        "deepseek-v4-flash": "V4 快速版，速度与效果平衡",
+    },
+    "ustc": {
+        "deepseek-v4-flash": "V4 快速版（校内平台推荐）",
+        "deepseek-v4-pro": "V4 旗舰模型",
+    },
 }
-DEEPSEEK_MODEL = "deepseek-chat"
-# 仅 deepseek-reasoner 生效：是否在推送正文中附带模型的思考过程（CoT）
+_default_model = "deepseek-v4-flash" if LLM_PROVIDER == "ustc" else "deepseek-chat"
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", _default_model)
+# 仅 official + deepseek-reasoner 生效：是否在推送正文中附带思考过程（CoT）
 DEEPSEEK_INCLUDE_REASONING = False
 
 # 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
@@ -57,25 +84,70 @@ EMAIL_SUBJECT_PREFIX = "ArXiv 每日论文"
 
 PWC_BASE_URL = "https://arxiv.paperswithcode.com/api/v0/papers/"
 
+def get_provider_config():
+    """获取当前 LLM 渠道配置"""
+    if LLM_PROVIDER not in LLM_PROVIDERS:
+        supported = ", ".join(LLM_PROVIDERS.keys())
+        raise ValueError(f"无效的 LLM_PROVIDER: {LLM_PROVIDER!r}，可选值: {supported}")
+    return LLM_PROVIDERS[LLM_PROVIDER]
+
+def get_provider_models():
+    """获取当前渠道支持的模型列表"""
+    return PROVIDER_MODELS[LLM_PROVIDER]
+
+def get_chat_completions_url(base_url):
+    """将 base_url 规范为 chat/completions 端点"""
+    base = base_url.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
+
+def resolve_api_key(provider_cfg):
+    """解析当前渠道的 API Key"""
+    key = os.environ.get(provider_cfg["api_key_env"], "").strip()
+    fallback_env = provider_cfg.get("api_key_fallback_env")
+    if not key and fallback_env:
+        key = os.environ.get(fallback_env, "").strip()
+    if not key:
+        key = provider_cfg.get("default_api_key", "")
+    return key
+
+def get_llm_request_settings():
+    """组装 LLM 请求所需的 URL、Key、温度等参数"""
+    provider_cfg = get_provider_config()
+    return {
+        "provider_name": provider_cfg["name"],
+        "api_url": get_chat_completions_url(provider_cfg["base_url"]),
+        "api_key": resolve_api_key(provider_cfg),
+        "temperature": provider_cfg.get("temperature"),
+    }
+
 def validate_deepseek_model():
-    """校验配置的模型是否在支持列表中"""
-    if DEEPSEEK_MODEL not in DEEPSEEK_MODELS:
-        supported = ", ".join(DEEPSEEK_MODELS.keys())
+    """校验渠道与模型配置"""
+    get_provider_config()
+    models = get_provider_models()
+    if DEEPSEEK_MODEL not in models:
+        supported = ", ".join(models.keys())
         raise ValueError(
-            f"无效的 DEEPSEEK_MODEL: {DEEPSEEK_MODEL!r}，"
+            f"渠道 [{LLM_PROVIDER}] 不支持模型 {DEEPSEEK_MODEL!r}，"
             f"可选值: {supported}"
         )
+    settings = get_llm_request_settings()
+    if settings["api_key"].startswith("your_"):
+        key_hint = get_provider_config()["api_key_env"]
+        raise ValueError(f"请先在 .env 中配置 {key_hint}")
 
 def get_deepseek_timeout():
     """推理模型耗时更长，自动延长超时"""
-    if DEEPSEEK_MODEL == "deepseek-reasoner":
+    if LLM_PROVIDER == "official" and DEEPSEEK_MODEL == "deepseek-reasoner":
         return 300
     return 120
 
 def get_model_footer():
     """生成推送页脚中的模型说明"""
-    desc = DEEPSEEK_MODELS.get(DEEPSEEK_MODEL, "")
-    return f"基于 DeepSeek ({DEEPSEEK_MODEL}) 自动生成 — {desc}"
+    provider_cfg = get_provider_config()
+    desc = get_provider_models().get(DEEPSEEK_MODEL, "")
+    return f"基于 {provider_cfg['name']} ({DEEPSEEK_MODEL}) 自动生成 — {desc}"
 
 def extract_deepseek_content(res_json):
     """从 API 响应中提取正文，兼容 reasoner 的 reasoning_content"""
@@ -120,53 +192,56 @@ def summarize_with_deepseek(paper):
     【专业知识解释】: （解释论文中核心实验方法涉及的专业名词概念（比如SFT微调、ResNet架构、推理等）
     """
 
+    llm = get_llm_request_settings()
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": "你是一个学术分析专家，擅长将复杂的人工智能领域的论文总结得清晰易懂。"},
             {"role": "user", "content": prompt_text}
         ],
-        "stream": False
+        "stream": False,
     }
-    
+    if llm["temperature"] is not None:
+        payload["temperature"] = llm["temperature"]
+
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+        "Authorization": f"Bearer {llm['api_key']}",
     }
 
-      
+    api_label = llm["provider_name"]
     try:
         response = requests.post(
-            DEEPSEEK_API_URL, headers=headers, json=payload, timeout=get_deepseek_timeout()
+            llm["api_url"], headers=headers, json=payload, timeout=get_deepseek_timeout()
         )
 
         if not response.ok:
             body_preview = (response.text or "")[:300]
             return (
-                f"DeepSeek API HTTP {response.status_code}: "
+                f"{api_label} HTTP {response.status_code}: "
                 f"{body_preview or '(空响应)'}"
             )
 
         if not response.text or not response.text.strip():
-            return "DeepSeek API 返回空响应，请检查 API URL 与网络连接。"
+            return f"{api_label} 返回空响应，请检查 API 地址与网络连接。"
 
         try:
             res_json = response.json()
         except ValueError:
             body_preview = response.text[:300]
-            return f"DeepSeek API 返回非 JSON 内容: {body_preview}"
+            return f"{api_label} 返回非 JSON 内容: {body_preview}"
 
         if "error" in res_json:
             err = res_json["error"]
             msg = err.get("message", err) if isinstance(err, dict) else err
-            return f"DeepSeek API 报错: {msg}"
+            return f"{api_label} 报错: {msg}"
 
         if "choices" not in res_json or not res_json["choices"]:
             return f"API 未预期响应: {json.dumps(res_json, ensure_ascii=False)[:500]}"
 
         return extract_deepseek_content(res_json)
     except requests.Timeout:
-        return "DeepSeek API 请求超时，请稍后重试。"
+        return f"{api_label} 请求超时，请稍后重试。"
     except requests.RequestException as e:
         return f"网络请求失败: {e}"
 
@@ -265,7 +340,12 @@ def push_to_email(report_content):
 
 if __name__ == "__main__":
     validate_deepseek_model()
-    print(f"使用 DeepSeek 模型: {DEEPSEEK_MODEL} — {DEEPSEEK_MODELS[DEEPSEEK_MODEL]}")
+    llm = get_llm_request_settings()
+    print(
+        f"LLM 渠道: {llm['provider_name']} ({LLM_PROVIDER}) | "
+        f"模型: {DEEPSEEK_MODEL} — {get_provider_models()[DEEPSEEK_MODEL]}"
+    )
+    print(f"API 端点: {llm['api_url']}")
     print("正在搜集最新论文...")
     client = arxiv.Client()
     search = arxiv.Search(

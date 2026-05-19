@@ -27,11 +27,25 @@ pip install arxiv requests
 
 - 编辑 daily_paper.py，填写以下配置项：
 
+在 `.env` 中配置（参考 `.env.example`）：
+
+```bash
+# 官方 DeepSeek
+LLM_PROVIDER=official
+DEEPSEEK_API_KEY=你的DeepSeek_API_Key
+DEEPSEEK_MODEL=deepseek-chat
+
+# 或：中科大校内 LLM 平台
+LLM_PROVIDER=ustc
+USTC_API_KEY=你的校内平台_API_Key
+DEEPSEEK_MODEL=deepseek-v4-flash
+USTC_TEMPERATURE=0.3
+```
+
+`daily_paper.py` 中还可配置飞书、邮箱等：
+
 ```python
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/你的Webhook地址"
-DEEPSEEK_API_KEY = "你的DeepSeek API Key"  # 或通过环境变量 DEEPSEEK_API_KEY 设置
-DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"  # 可选: deepseek-chat | deepseek-reasoner | deepseek-v4-pro | deepseek-v4-flash
 
 # 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
 EMAIL_ENABLED = False
@@ -47,7 +61,7 @@ EMAIL_SUBJECT_PREFIX = "ArXiv 每日论文"
 ```
 
 - 飞书 Webhook：在飞书群设置 → 添加机器人 → 自定义机器人 → 获取 Webhook 地址
-- DeepSeek API Key：在 DeepSeek 开放平台 获取
+- DeepSeek API Key：在 DeepSeek 开放平台 获取；校内用户可设 `LLM_PROVIDER=ustc` 并使用中科大平台 Key
 - 邮箱 SMTP：在邮箱服务商开启 SMTP/客户端授权，填写服务器地址、端口、账号和授权码
 - 如使用 465 端口，通常保持 `SMTP_USE_SSL = True`；如使用 587 端口，通常设置 `SMTP_USE_SSL = False` 且 `SMTP_USE_TLS = True`
 - 支持多个收件人，例如：`EMAIL_TO = ["a@example.com", "b@example.com"]`
