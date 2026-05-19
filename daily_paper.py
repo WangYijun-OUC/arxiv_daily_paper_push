@@ -1,13 +1,30 @@
 import arxiv
 import requests
 import json
+import html
+import re
+import smtplib
+import ssl
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 import time
 
 # --- 配置区 ---
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook"
 DEEPSEEK_API_KEY = "your_api_key"  
 DEEPSEEK_API_URL = "your_api_url"
+
+# 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
+EMAIL_ENABLED = False
+SMTP_HOST = "smtp.example.com"
+SMTP_PORT = 465
+SMTP_USERNAME = "your_email@example.com"
+SMTP_PASSWORD = "your_email_password_or_app_password"
+SMTP_USE_SSL = True
+SMTP_USE_TLS = False
+EMAIL_FROM = SMTP_USERNAME
+EMAIL_TO = ["recipient@example.com"]
+EMAIL_SUBJECT_PREFIX = "ArXiv 每日论文"
 
 PWC_BASE_URL = "https://arxiv.paperswithcode.com/api/v0/papers/"
 
@@ -86,6 +103,78 @@ def push_to_feishu(report_content):
     }
     requests.post(FEISHU_WEBHOOK, headers=header, json=payload)
 
+def markdown_links_to_html(text):
+    """将报告中的 Markdown 链接转换为邮件 HTML 链接"""
+    escaped_text = html.escape(text)
+    return re.sub(
+        r"\[([^\]]+)\]\((https?://[^)]+)\)",
+        r'<a href="\2">\1</a>',
+        escaped_text
+    )
+
+def build_email_html(report_content):
+    """构建适合邮箱阅读的 HTML 内容"""
+    html_lines = []
+    for raw_line in report_content.splitlines():
+        stripped_line = raw_line.strip()
+        if not stripped_line:
+            continue
+
+        line = markdown_links_to_html(stripped_line)
+        if stripped_line.startswith("### "):
+            html_lines.append(f"<h2>{line[4:]}</h2>")
+        elif stripped_line == "---":
+            html_lines.append("<hr>")
+        else:
+            html_lines.append(f"<p>{line}</p>")
+
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: Arial, "Microsoft YaHei", sans-serif; line-height: 1.6; color: #222; }}
+    h1, h2 {{ color: #d46b08; }}
+    a {{ color: #1677ff; }}
+    hr {{ border: none; border-top: 1px solid #eee; margin: 24px 0; }}
+  </style>
+</head>
+<body>
+  <h1>ArXiv {datetime.now().strftime('%Y-%m-%d')}</h1>
+  {''.join(html_lines)}
+  <p><em>基于 DeepSeek-V3 自动生成</em></p>
+</body>
+</html>"""
+
+def push_to_email(report_content):
+    """发送邮件推送"""
+    if not EMAIL_ENABLED:
+        return
+
+    recipients = EMAIL_TO if isinstance(EMAIL_TO, (list, tuple)) else [EMAIL_TO]
+    recipients = [recipient.strip() for recipient in recipients if recipient and recipient.strip()]
+    if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD or not recipients:
+        raise ValueError("邮箱推送配置不完整，请检查 SMTP_HOST、SMTP_USERNAME、SMTP_PASSWORD 和 EMAIL_TO。")
+
+    message = EmailMessage()
+    message["Subject"] = f"{EMAIL_SUBJECT_PREFIX} {datetime.now().strftime('%Y-%m-%d')}"
+    message["From"] = EMAIL_FROM or SMTP_USERNAME
+    message["To"] = ", ".join(recipients)
+    message.set_content(report_content, subtype="plain", charset="utf-8")
+    message.add_alternative(build_email_html(report_content), subtype="html")
+
+    context = ssl.create_default_context()
+    if SMTP_USE_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(message)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            if SMTP_USE_TLS:
+                server.starttls(context=context)
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(message)
+
 if __name__ == "__main__":
     print("正在搜集最新论文...")
     client = arxiv.Client()
@@ -117,4 +206,5 @@ if __name__ == "__main__":
             full_report += f"### {i+1}. {res.title}\n🔗 [原文]({res.entry_id}){code_md}\n{summary}\n\n---\n"
         
         push_to_feishu(full_report)
-        print("推送成功！")
+        push_to_email(full_report)
+        print("推送完成！")
