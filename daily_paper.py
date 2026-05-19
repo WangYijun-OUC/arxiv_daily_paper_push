@@ -1,4 +1,5 @@
 import arxiv
+import os
 import requests
 import json
 import html
@@ -9,17 +10,45 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 import time
 
+def _load_dotenv():
+    """从项目目录 .env 加载环境变量（文件已加入 .gitignore，不会上传）"""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+_load_dotenv()
+
 # --- 配置区 ---
+# 敏感信息：在 .env 或系统环境变量中设置 DEEPSEEK_API_KEY、SMTP_PASSWORD、SMTP_USERNAME
+FEISHU_ENABLED = False
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook"
-DEEPSEEK_API_KEY = "your_api_key"  
-DEEPSEEK_API_URL = "your_api_url"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "your_deepseek_api_key")
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+# DeepSeek 模型选择（修改 DEEPSEEK_MODEL 即可切换）
+DEEPSEEK_MODELS = {
+    "deepseek-chat": "通用对话，速度快，适合日常论文摘要",
+    "deepseek-reasoner": "推理模型，先思考再回答，质量更高但更慢、更耗 token",
+    "deepseek-v4-pro": "V4 旗舰模型，效果最好",
+    "deepseek-v4-flash": "V4 快速版，速度与效果平衡",
+}
+DEEPSEEK_MODEL = "deepseek-chat"
+# 仅 deepseek-reasoner 生效：是否在推送正文中附带模型的思考过程（CoT）
+DEEPSEEK_INCLUDE_REASONING = False
 
 # 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
-EMAIL_ENABLED = False
+EMAIL_ENABLED = True
 SMTP_HOST = "smtp.126.com"
 SMTP_PORT = 465
-SMTP_USERNAME = "wangyijun010522@126.com"
-SMTP_PASSWORD = "ELwqV3AUZqMJjnFS"
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "your_email@example.com")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "your_smtp_password")
 SMTP_USE_SSL = True
 SMTP_USE_TLS = False
 EMAIL_FROM = SMTP_USERNAME
@@ -28,14 +57,51 @@ EMAIL_SUBJECT_PREFIX = "ArXiv 每日论文"
 
 PWC_BASE_URL = "https://arxiv.paperswithcode.com/api/v0/papers/"
 
+def validate_deepseek_model():
+    """校验配置的模型是否在支持列表中"""
+    if DEEPSEEK_MODEL not in DEEPSEEK_MODELS:
+        supported = ", ".join(DEEPSEEK_MODELS.keys())
+        raise ValueError(
+            f"无效的 DEEPSEEK_MODEL: {DEEPSEEK_MODEL!r}，"
+            f"可选值: {supported}"
+        )
+
+def get_deepseek_timeout():
+    """推理模型耗时更长，自动延长超时"""
+    if DEEPSEEK_MODEL == "deepseek-reasoner":
+        return 300
+    return 120
+
+def get_model_footer():
+    """生成推送页脚中的模型说明"""
+    desc = DEEPSEEK_MODELS.get(DEEPSEEK_MODEL, "")
+    return f"基于 DeepSeek ({DEEPSEEK_MODEL}) 自动生成 — {desc}"
+
+def extract_deepseek_content(res_json):
+    """从 API 响应中提取正文，兼容 reasoner 的 reasoning_content"""
+    message = res_json["choices"][0]["message"]
+    content = (message.get("content") or "").strip()
+    reasoning = (message.get("reasoning_content") or "").strip()
+
+    if reasoning and DEEPSEEK_INCLUDE_REASONING:
+        parts = [f"【思考过程】\n{reasoning}"]
+        if content:
+            parts.append(f"【分析结果】\n{content}")
+        return "\n\n".join(parts)
+
+    return content or "（模型未返回内容）"
+
 def get_code_link(arxiv_url):
     """从 PapersWithCode 获取代码链接"""
     arxiv_id = arxiv_url.split('/')[-1].split('v')[0]
     try:
-        r = requests.get(f"{PWC_BASE_URL}{arxiv_id}", timeout=10).json()
-        if "official" in r and r["official"]:
-            return r["official"]["url"]
-    except:
+        r = requests.get(f"{PWC_BASE_URL}{arxiv_id}", timeout=10)
+        if not r.ok or not r.text.strip():
+            return None
+        data = r.json()
+        if "official" in data and data["official"]:
+            return data["official"]["url"]
+    except (requests.RequestException, ValueError, KeyError):
         pass
     return None
 
@@ -55,7 +121,7 @@ def summarize_with_deepseek(paper):
     """
 
     payload = {
-        "model": "deepseek-chat", 
+        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": "你是一个学术分析专家，擅长将复杂的人工智能领域的论文总结得清晰易懂。"},
             {"role": "user", "content": prompt_text}
@@ -70,21 +136,43 @@ def summarize_with_deepseek(paper):
 
       
     try:
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=60)
-        res_json = response.json()
-        
-        # 增加这部分调试代码
-        if 'error' in res_json:
-            return f"DeepSeek API 报错: {res_json['error']['message']}"
-        
-        if 'choices' not in res_json:
-            return f"API 未预期响应: {json.dumps(res_json)}"
+        response = requests.post(
+            DEEPSEEK_API_URL, headers=headers, json=payload, timeout=get_deepseek_timeout()
+        )
 
-        return res_json['choices'][0]['message']['content']
-    except Exception as e:
-        return f"网络或系统错误: {str(e)}"
+        if not response.ok:
+            body_preview = (response.text or "")[:300]
+            return (
+                f"DeepSeek API HTTP {response.status_code}: "
+                f"{body_preview or '(空响应)'}"
+            )
+
+        if not response.text or not response.text.strip():
+            return "DeepSeek API 返回空响应，请检查 API URL 与网络连接。"
+
+        try:
+            res_json = response.json()
+        except ValueError:
+            body_preview = response.text[:300]
+            return f"DeepSeek API 返回非 JSON 内容: {body_preview}"
+
+        if "error" in res_json:
+            err = res_json["error"]
+            msg = err.get("message", err) if isinstance(err, dict) else err
+            return f"DeepSeek API 报错: {msg}"
+
+        if "choices" not in res_json or not res_json["choices"]:
+            return f"API 未预期响应: {json.dumps(res_json, ensure_ascii=False)[:500]}"
+
+        return extract_deepseek_content(res_json)
+    except requests.Timeout:
+        return "DeepSeek API 请求超时，请稍后重试。"
+    except requests.RequestException as e:
+        return f"网络请求失败: {e}"
 
 def push_to_feishu(report_content):
+    if not FEISHU_ENABLED:
+        return
     """发送飞书富文本卡片"""
     header = { "Content-Type": "application/json" }
     payload = {
@@ -97,7 +185,7 @@ def push_to_feishu(report_content):
             "elements": [
                 {"tag": "markdown", "content": report_content},
                 {"tag": "hr"},
-                {"tag": "note", "elements": [{"tag": "plain_text", "content": "基于 DeepSeek-V3 自动生成"}]}
+                {"tag": "note", "elements": [{"tag": "plain_text", "content": get_model_footer()}]}
             ]
         }
     }
@@ -142,7 +230,7 @@ def build_email_html(report_content):
 <body>
   <h1>ArXiv {datetime.now().strftime('%Y-%m-%d')}</h1>
   {''.join(html_lines)}
-  <p><em>基于 DeepSeek-V3 自动生成</em></p>
+  <p><em>{html.escape(get_model_footer())}</em></p>
 </body>
 </html>"""
 
@@ -176,6 +264,8 @@ def push_to_email(report_content):
             server.send_message(message)
 
 if __name__ == "__main__":
+    validate_deepseek_model()
+    print(f"使用 DeepSeek 模型: {DEEPSEEK_MODEL} — {DEEPSEEK_MODELS[DEEPSEEK_MODEL]}")
     print("正在搜集最新论文...")
     client = arxiv.Client()
     search = arxiv.Search(
@@ -191,7 +281,7 @@ if __name__ == "__main__":
         print("今日暂无新论文。")
     else:
         for i, res in enumerate(results):
-            print(f"正在分析第 {i+1}/{len(results)} 篇: {res.title}")
+            print(f"正在分析第 {i+1}/{len(results)} 篇 ({DEEPSEEK_MODEL}): {res.title}")
             
             code_url = get_code_link(res.entry_id)
             code_md = f" | [💻 代码]({code_url})" if code_url else ""

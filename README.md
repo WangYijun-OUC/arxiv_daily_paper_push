@@ -29,8 +29,9 @@ pip install arxiv requests
 
 ```python
 FEISHU_WEBHOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/你的Webhook地址"
-DEEPSEEK_API_KEY = "你的DeepSeek API Key"
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"  # 或你的API地址
+DEEPSEEK_API_KEY = "你的DeepSeek API Key"  # 或通过环境变量 DEEPSEEK_API_KEY 设置
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+DEEPSEEK_MODEL = "deepseek-chat"  # 可选: deepseek-chat | deepseek-reasoner | deepseek-v4-pro | deepseek-v4-flash
 
 # 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
 EMAIL_ENABLED = False
