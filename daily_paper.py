@@ -16,14 +16,14 @@ DEEPSEEK_API_URL = "your_api_url"
 
 # 邮箱推送配置（默认关闭；填写 SMTP 信息后改为 True）
 EMAIL_ENABLED = False
-SMTP_HOST = "smtp.example.com"
+SMTP_HOST = "smtp.126.com"
 SMTP_PORT = 465
-SMTP_USERNAME = "your_email@example.com"
-SMTP_PASSWORD = "your_email_password_or_app_password"
+SMTP_USERNAME = "wangyijun010522@126.com"
+SMTP_PASSWORD = "ELwqV3AUZqMJjnFS"
 SMTP_USE_SSL = True
 SMTP_USE_TLS = False
 EMAIL_FROM = SMTP_USERNAME
-EMAIL_TO = ["recipient@example.com"]
+EMAIL_TO = ["wangyijun010522@126.com"]
 EMAIL_SUBJECT_PREFIX = "ArXiv 每日论文"
 
 PWC_BASE_URL = "https://arxiv.paperswithcode.com/api/v0/papers/"
